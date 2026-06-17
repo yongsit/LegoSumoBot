@@ -7,15 +7,16 @@ import color_sensor
 import distance_sensor
 import color
 import random
+import time
 
 import runloop
 
 # List of Constants
 # Sumo ring diameter = 150 cm
-RING_DIAMETER = 200
+FINDING_RANGE = 400
 
 # Maximum time for finind opponent
-MAX_FINDING = 3
+MAX_FINDING = 1
 
 # List of Pors
 LEFT_IR  = port.D
@@ -26,13 +27,23 @@ DISTANCE_SENSOR = port.E
 finding_counter = 0
 leftDetected = False
 rightDetected = False
-opponent_found = False
 
-def isOpponentFound():
+
+
+def opponentDistance():
     # Found opponent when the distance to opponent < ring size/2 and not detect edge
-    global opponent_found
-    opponent_found = not isAtEdge() and distance_sensor.distance(port.E) > 0 and distance_sensor.distance(port.E) < RING_DIAMETER/2
-    return opponent_found
+    
+    _opponent_distance = distance_sensor.distance(port.E)
+
+    #opponent_found = not isAtEdge() and _opponent_distance > 0 and _opponent_distance < FINDING_RANGE
+
+    if (_opponent_distance < 0 or _opponent_distance > FINDING_RANGE):
+        _opponent_distance = -1
+        distance_sensor.clear(port.E)
+    else:
+        distance_sensor.show(port.E, [100]*4)
+    
+    return _opponent_distance
 
 def isAtEdge():
 
@@ -87,14 +98,6 @@ async def turnRobot(isRandom = True, _leftvelocity=400, _rightvelocity=400, _min
     print("- right: " + str(rightVelocity))
     await motor_pair.move_tank_for_time(motor_pair.PAIR_1, leftVelocity, rightVelocity, turnDuration)
 
-async def thisIsSpattaaaaaa():
-    # Opponent is in the front .... Kill it with fullspeed.
-    # If opponent disappear, stop the robot
-    print ("This is SPARTAAAAA !!!!")
-    motor_pair.move_tank(motor_pair.PAIR_1, 1000, 1000)
-    await runloop.until(lambda: not isOpponentFound())
-    motor_pair.stop(motor_pair.PAIR_1, stop=motor.BRAKE)
-
 
 async def strolling():
     print("I'm walking in Lavender field.")
@@ -103,32 +106,33 @@ async def strolling():
     finding_counter = 0
 
     # Running straigth until reach edge or found opponent
-    motor_pair.move_tank(motor_pair.PAIR_1, 400, 400)
-    await runloop.until(lambda : isAtEdge() or isOpponentFound())
+
+    while (not isAtEdge()):
+        opDist = opponentDistance()
+        strollingSpeed = 400 if opDist == -1 else int(400+(600-(1.5*opDist)))
+        motor_pair.move_tank(motor_pair.PAIR_1, strollingSpeed, strollingSpeed)
+    
     motor_pair.stop(motor_pair.PAIR_1, stop=motor.BRAKE)
 
-    if (opponent_found):
-        # Kill them
-        await thisIsSpattaaaaaa()
+    # Then revsere for a short time
+    moveBackDuration = random.randint(1000,1500)
+    await motor_pair.move_tank_for_time(motor_pair.PAIR_1, -400, -400, moveBackDuration)
+
+    # Turn robot as per detected side
+    if (leftDetected and rightDetected):
+        # Both IR detect edge, random turn
+        await turnRobot()
+
+    elif (leftDetected and not rightDetected):
+        # Only left IR detects edge, turn right
+        await turnRobot(False, 400, -400)
+
+    elif (not leftDetected and rightDetected):
+        # Only right IR detects edge, turn left
+        await turnRobot(False, -400, 400)
     else:
-        # Then revsere for a short time
-        moveBackDuration = random.randint(1000,1500)
-        await motor_pair.move_tank_for_time(motor_pair.PAIR_1, -400, -400, moveBackDuration)
+        print("....Do nothing....")
 
-        # Turn robot as per detected side
-        if (leftDetected and rightDetected):
-            # Both IR detect edge, random turn
-            await turnRobot()
-
-        elif (leftDetected and not rightDetected):
-            # Only left IR detects edge, turn right
-            await turnRobot(False, 400, -400)
-
-        elif (not leftDetected and rightDetected):
-            # Only right IR detects edge, turn left
-            await turnRobot(False, -400, 400)
-        else:
-            print("....Do nothing....")
 
 async def findingOpponent():
     # If number of finding is exceed maximum, do nothing
@@ -149,24 +153,27 @@ async def findingOpponent():
         leftVelocity *=-1
     else:
         rightVelocity *=-1
-    motor_pair.move_tank(motor_pair.PAIR_1, leftVelocity, rightVelocity)
-    await runloop.until((lambda : isAtEdge() or isOpponentFound()), timeout=1500)
 
-    # If opponent found, kill them
-    if (opponent_found):
-        # Kill them
-        await thisIsSpattaaaaaa()
+    startTime = time.ticks_ms()
+    while ( not isAtEdge() and time.ticks_diff(time.ticks_ms(), startTime) < 3000):
+        opDist = opponentDistance()
+        if (opDist >= 0):
+            break
+        motor_pair.move_tank(motor_pair.PAIR_1, leftVelocity, rightVelocity)    
+
+    motor_pair.stop(motor_pair.PAIR_1, stop = motor.BRAKE)
 
 async def battle():
     print("Battle start")
 
     modeList = (findingOpponent, strolling)
+
     
     while (True):
         # Selecting a mode by using random
         mode = random.choice(modeList)
         await mode()
-        await runloop.sleep_ms(1000)
+        #await runloop.sleep_ms(100)
 
 
 # Initialize the robot
